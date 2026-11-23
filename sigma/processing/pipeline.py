@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from copy import deepcopy
 from dataclasses import dataclass, field
 from functools import partial
 import hashlib
@@ -1054,13 +1055,19 @@ class ProcessingPipeline:
         else:
             merged_policy = self.policy or other.policy
 
-        self._clear_pipeline()
-        other._clear_pipeline()
-
+        # The merged pipeline gets deep copies of the items of both pipelines. The copies are
+        # detached from their originating pipeline (back-references to it become None via the
+        # deepcopy memo) and are bound to the merged pipeline by its __post_init__. This keeps
+        # the merge non-destructive: the merged pipelines keep their items and their
+        # item-to-pipeline associations, so merging the same pipeline multiple times yields
+        # consistent results and the original pipelines behave as if they were never merged.
         return self.__class__(
-            items=self.items + other.items,
-            postprocessing_items=self.postprocessing_items + other.postprocessing_items,
-            finalizers=self.finalizers + other.finalizers,
+            items=deepcopy(self.items, {id(self): None})
+            + deepcopy(other.items, {id(other): None}),
+            postprocessing_items=deepcopy(self.postprocessing_items, {id(self): None})
+            + deepcopy(other.postprocessing_items, {id(other): None}),
+            finalizers=deepcopy(self.finalizers, {id(self): None})
+            + deepcopy(other.finalizers, {id(other): None}),
             vars={**self.vars, **other.vars},
             policy=merged_policy,
         )

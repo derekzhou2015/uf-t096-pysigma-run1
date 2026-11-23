@@ -1488,6 +1488,124 @@ def test_processingpipeline_sum():
     )
 
 
+def test_processingpipeline_concatenation_is_non_destructive():
+    """Merging pipelines must not re-parent the items of the merged pipelines: the original
+    pipelines keep ownership of their items and the merge product owns independent copies."""
+    p1 = ProcessingPipeline(
+        items=[
+            ProcessingItem(
+                transformation=TransformationPrepend(s="Pre"),
+                identifier="pre",
+            ),
+        ],
+    )
+    p2 = ProcessingPipeline(
+        items=[
+            ProcessingItem(
+                transformation=TransformationAppend(s="Append"),
+                identifier="append",
+            ),
+        ],
+    )
+    merged = p1 + p2
+
+    # The original pipelines keep their items and the item-to-pipeline associations.
+    assert p1.items[0]._pipeline is p1
+    assert p2.items[0]._pipeline is p2
+
+    # The merge product contains copies that are bound to itself, not the original items.
+    assert merged.items[0] is not p1.items[0]
+    assert merged.items[1] is not p2.items[0]
+    assert all(item._pipeline is merged for item in merged.items)
+    assert merged.items[0].transformation._pipeline is merged
+    assert merged.items[0].transformation.processing_item is merged.items[0]
+
+
+def test_processingpipeline_concatenation_original_behavior_unchanged(sigma_rule):
+    """A pipeline that took part in a merge must behave exactly as if it never was merged:
+    state and field mappings from its application are tracked on itself, not on the merge
+    product."""
+    pipeline_definition = lambda: ProcessingPipeline(  # noqa: E731
+        items=[
+            ProcessingItem(
+                transformation=SetStateTransformation("key", "value"),
+                identifier="set_state",
+            ),
+            ProcessingItem(
+                transformation=FieldMappingTransformation({"field": "mapped"}),
+                identifier="map_field",
+            ),
+        ],
+    )
+
+    # Reference behavior of a pipeline that never participated in a merge.
+    reference = pipeline_definition()
+    reference.apply(deepcopy(sigma_rule))
+
+    # Same pipeline, but merged with another one before it is applied.
+    p = pipeline_definition()
+    merged = p + ProcessingPipeline(
+        items=[
+            ProcessingItem(
+                transformation=TransformationAppend(s="Append"),
+                identifier="append",
+            ),
+        ],
+    )
+    p.apply(deepcopy(sigma_rule))
+
+    assert p.state == reference.state == {"key": "value"}
+    assert p.field_mappings == reference.field_mappings
+    assert merged.state == {}
+    assert dict(merged.field_mappings) == {}
+
+
+def test_processingpipeline_repeated_merges_are_consistent(sigma_rule):
+    """Merging the same base pipeline multiple times must yield consistent, mutually
+    independent merge products."""
+    base = ProcessingPipeline(
+        items=[
+            ProcessingItem(
+                transformation=FieldMappingTransformation({"field": "mapped"}),
+                identifier="map_field",
+            ),
+        ],
+    )
+    other1 = ProcessingPipeline(
+        items=[
+            ProcessingItem(
+                transformation=SetStateTransformation("k1", "v1"),
+                identifier="set_state_1",
+            ),
+        ],
+    )
+    other2 = ProcessingPipeline(
+        items=[
+            ProcessingItem(
+                transformation=SetStateTransformation("k2", "v2"),
+                identifier="set_state_2",
+            ),
+        ],
+    )
+
+    m1 = base + other1
+    m2 = base + other2
+
+    # The first merge product is not affected by the second merge of the same base pipeline.
+    assert all(item._pipeline is m1 for item in m1.items)
+    assert all(item._pipeline is m2 for item in m2.items)
+
+    # Repeated merges of unchanged pipelines are equal by value.
+    assert base + other1 == m1
+
+    # Both products apply independently and produce their own consistent results.
+    m1.apply(deepcopy(sigma_rule))
+    m2.apply(deepcopy(sigma_rule))
+    assert m1.state == {"k1": "v1"}
+    assert m2.state == {"k2": "v2"}
+    assert dict(m1.field_mappings) == dict(m2.field_mappings) == {"field": {"mapped"}}
+
+
 def test_processingpipeline_null_concatenation():
     p = ProcessingPipeline(
         items=[

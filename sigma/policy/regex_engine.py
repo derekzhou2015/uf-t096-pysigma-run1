@@ -30,6 +30,14 @@ class RegexEngine(ABC):
     def __hash__(self) -> int:
         return hash(type(self))
 
+    def __copy__(self) -> "RegexEngine":
+        # Engines are stateless strategies (RE2RegexEngine only holds a module reference,
+        # which is not copyable), so copies share the same object.
+        return self
+
+    def __deepcopy__(self, memo: Any) -> "RegexEngine":
+        return self
+
     @abstractmethod
     def compile(self, pattern: str, flags: int = 0) -> RegexPattern:
         """Compile a regex pattern and return a compiled pattern object."""

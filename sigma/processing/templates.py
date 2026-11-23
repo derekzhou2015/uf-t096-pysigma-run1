@@ -6,6 +6,7 @@ import re
 import sys
 import types
 import uuid
+from copy import deepcopy
 from string import Formatter
 from typing import Any, Callable, Dict, Iterable, Mapping, Sequence, TYPE_CHECKING
 
@@ -212,6 +213,20 @@ class TemplateBase:
     vars: str | None = None
     policy: "SigmaPolicy | None" = None
     restrict_template_path: bool = False
+
+    def __deepcopy__(self, memo: Dict[int, Any]) -> "TemplateBase":
+        """Deep copy that shares the compiled Jinja2 template (``j2template``).
+
+        The compiled template is immutable after ``__post_init__`` and cannot be deep-copied
+        (``jinja2.Template`` doesn't support it), so the copy references the same template
+        object while everything else is deep-copied.
+        """
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for name, value in self.__dict__.items():
+            setattr(result, name, value if name == "j2template" else deepcopy(value, memo))
+        return result
 
     def __post_init__(self) -> None:
         env = SigmaSandboxedEnvironment(autoescape=self.autoescape)
